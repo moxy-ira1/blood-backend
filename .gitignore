@@ -1,26 +1,16 @@
-# Node modules (VERY IMPORTANT)
-node_modules/
+# v0 sandbox internal files
+__v0_runtime_loader.js
+__v0_devtools.tsx
+__v0_jsx-dev-runtime.ts
+.snowflake/
+.v0-trash/
+.vercel/
 
-# Environment variables (secrets)
-.env
+# Environment variables
+.env*.local
 
-# Logs
-logs
-*.log
-npm-debug.log*
-
-# OS files
+# Common ignores
+node_modules
+.next/
 .DS_Store
-Thumbs.db
-
-# Build folders (if any)
-dist/
-build/
-
-# Optional: local DB / temp files
-*.sqlite
-*.db
-
-# IDE files
-.vscode/
-.idea/
+.vercel
