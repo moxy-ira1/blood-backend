@@ -1,227 +1,468 @@
-"use client"
+"use client";
 
-import { useState } from "react"
-import { useAuth } from "@/lib/auth-context"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Droplets, Mail, Phone, CreditCard, AlertCircle, Loader2 } from "lucide-react"
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { Droplet, AlertCircle, Loader2, Phone, Mail, User, KeyRound } from "lucide-react";
+import { authApi, ApiError, checkBackendConnection } from "@/lib/api";
+import { useAuth, getRedirectPath } from "@/lib/auth-context";
+
+type LoginTab = "donor" | "worker" | "btd";
+
+interface FormState {
+  isLoading: boolean;
+  error: string;
+  success: string;
+}
 
 export function LoginPage() {
-  const { login } = useAuth()
-  const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState("")
-  const [formData, setFormData] = useState({
-    email: "",
-    phone: "",
-    donorId: "",
-    password: "",
-  })
+  const router = useRouter();
+  const { login, isAuthenticated, user } = useAuth();
+  const [activeTab, setActiveTab] = useState<LoginTab>("donor");
+  const [backendConnected, setBackendConnected] = useState<boolean | null>(null);
 
-  const handleSubmit = async (e: React.FormEvent, method: string) => {
-    e.preventDefault()
-    setIsLoading(true)
-    setError("")
+  // Donor form state
+  const [donorFullName, setDonorFullName] = useState("");
+  const [donorNationalId, setDonorNationalId] = useState("");
+  const [donorForm, setDonorForm] = useState<FormState>({ isLoading: false, error: "", success: "" });
+
+  // Worker form state
+  const [workerPhone, setWorkerPhone] = useState("");
+  const [workerOtp, setWorkerOtp] = useState("");
+  const [otpSent, setOtpSent] = useState(false);
+  const [workerForm, setWorkerForm] = useState<FormState>({ isLoading: false, error: "", success: "" });
+
+  // BTD form state
+  const [btdEmail, setBtdEmail] = useState("");
+  const [btdPassword, setBtdPassword] = useState("");
+  const [btdForm, setBtdForm] = useState<FormState>({ isLoading: false, error: "", success: "" });
+
+  // Check backend connection on mount
+  useEffect(() => {
+    const checkConnection = async () => {
+      const connected = await checkBackendConnection();
+      setBackendConnected(connected);
+    };
+    checkConnection();
+  }, []);
+
+  // Redirect if already authenticated
+  useEffect(() => {
+    if (isAuthenticated && user) {
+      router.push(getRedirectPath(user.role));
+    }
+  }, [isAuthenticated, user, router]);
+
+  // Donor Login Handler
+  const handleDonorLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setDonorForm({ isLoading: true, error: "", success: "" });
+
+    if (!donorFullName.trim() || !donorNationalId.trim()) {
+      setDonorForm({ isLoading: false, error: "Please fill in all fields", success: "" });
+      return;
+    }
 
     try {
-      let identifier = ""
-      if (method === "email") {
-        identifier = formData.email
-      } else if (method === "phone") {
-        // For demo, map phone to email
-        identifier = "donor@bloodbank.com"
-      } else {
-        // For demo, map ID to email
-        identifier = "donor@bloodbank.com"
-      }
+      const response = await authApi.loginDonor({
+        fullName: donorFullName.trim(),
+        identifier: donorNationalId.trim(),
+      });
 
-      await login(identifier, formData.password)
-    } catch {
-      setError("Invalid credentials. Try: admin@bloodbank.com, worker@bloodbank.com, or donor@bloodbank.com")
-    } finally {
-      setIsLoading(false)
+      if (response.success && response.data) {
+        login(response.data.user, response.data.token);
+        setDonorForm({ isLoading: false, error: "", success: "Login successful" });
+        router.push(getRedirectPath(response.data.user.role));
+      }
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : "Login failed";
+      setDonorForm({ isLoading: false, error: message, success: "" });
     }
-  }
+  };
+
+  // Worker Send OTP Handler
+  const handleSendOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setWorkerForm({ isLoading: true, error: "", success: "" });
+
+    if (!workerPhone.trim()) {
+      setWorkerForm({ isLoading: false, error: "Please enter your phone number", success: "" });
+      return;
+    }
+
+    try {
+      const response = await authApi.sendOtp({ phone: workerPhone.trim() });
+
+      if (response.success) {
+        setOtpSent(true);
+        setWorkerForm({ isLoading: false, error: "", success: "OTP sent successfully" });
+      }
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : "Failed to send OTP";
+      setWorkerForm({ isLoading: false, error: message, success: "" });
+    }
+  };
+
+  // Worker Verify OTP Handler
+  const handleVerifyOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setWorkerForm({ isLoading: true, error: "", success: "" });
+
+    if (!workerOtp.trim()) {
+      setWorkerForm({ isLoading: false, error: "Please enter the OTP", success: "" });
+      return;
+    }
+
+    try {
+      const response = await authApi.verifyOtp({
+        phone: workerPhone.trim(),
+        otp: workerOtp.trim(),
+      });
+
+      if (response.success && response.data) {
+        login(response.data.user, response.data.token);
+        setWorkerForm({ isLoading: false, error: "", success: "Login successful" });
+        router.push(getRedirectPath(response.data.user.role));
+      }
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : "Invalid OTP";
+      setWorkerForm({ isLoading: false, error: message, success: "" });
+    }
+  };
+
+  // BTD Login Handler
+  const handleBtdLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBtdForm({ isLoading: true, error: "", success: "" });
+
+    if (!btdEmail.trim() || !btdPassword.trim()) {
+      setBtdForm({ isLoading: false, error: "Please fill in all fields", success: "" });
+      return;
+    }
+
+    try {
+      const response = await authApi.loginBtd({
+        email: btdEmail.trim(),
+        password: btdPassword,
+      });
+
+      if (response.success && response.data) {
+        login(response.data.user, response.data.token);
+        setBtdForm({ isLoading: false, error: "", success: "Login successful" });
+        router.push(getRedirectPath(response.data.user.role));
+      }
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : "Login failed";
+      setBtdForm({ isLoading: false, error: message, success: "" });
+    }
+  };
+
+  const tabs: { id: LoginTab; label: string; icon: React.ReactNode }[] = [
+    { id: "donor", label: "Donor", icon: <Droplet className="h-4 w-4" /> },
+    { id: "worker", label: "Worker", icon: <Phone className="h-4 w-4" /> },
+    { id: "btd", label: "BTD Admin", icon: <KeyRound className="h-4 w-4" /> },
+  ];
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-4">
+    <div className="min-h-screen bg-background flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         {/* Logo */}
-        <div className="flex flex-col items-center mb-8">
-          <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary mb-4">
-            <Droplets className="h-8 w-8 text-primary-foreground" />
-          </div>
-          <h1 className="text-2xl font-bold text-foreground">BloodBank</h1>
-          <p className="text-muted-foreground text-sm">Blood Donation Management System</p>
+        <div className="text-center mb-8">
+          <Link href="/" className="inline-flex items-center gap-2">
+            <div className="h-12 w-12 rounded-xl bg-primary flex items-center justify-center">
+              <Droplet className="h-7 w-7 text-primary-foreground" />
+            </div>
+            <span className="text-2xl font-bold text-foreground">BloodBank</span>
+          </Link>
+          <p className="text-muted-foreground mt-2">Sign in to your account</p>
         </div>
 
-        <Card className="bg-card border-border">
-          <CardHeader className="text-center">
-            <CardTitle className="text-card-foreground">Welcome Back</CardTitle>
-            <CardDescription>Sign in to access your dashboard</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {error && (
-              <Alert variant="destructive" className="mb-4">
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
+        {/* Backend Connection Warning */}
+        {backendConnected === false && (
+          <div className="mb-6 p-4 bg-destructive/10 border border-destructive/20 rounded-lg flex items-start gap-3">
+            <AlertCircle className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-medium text-destructive">Cannot connect to backend</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Please check API URL or server status. Set NEXT_PUBLIC_API_URL in your environment.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Login Card */}
+        <div className="bg-card border border-border rounded-2xl shadow-lg overflow-hidden">
+          {/* Tabs */}
+          <div className="flex border-b border-border">
+            {tabs.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex-1 flex items-center justify-center gap-2 py-4 px-4 text-sm font-medium transition-colors ${
+                  activeTab === tab.id
+                    ? "bg-primary/10 text-primary border-b-2 border-primary"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                }`}
+              >
+                {tab.icon}
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="p-6">
+            {/* Donor Login Form */}
+            {activeTab === "donor" && (
+              <form onSubmit={handleDonorLogin} className="space-y-4">
+                <div>
+                  <label htmlFor="donor-fullname" className="block text-sm font-medium text-foreground mb-2">
+                    Full Name
+                  </label>
+                  <div className="relative">
+                    <User className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+                    <input
+                      id="donor-fullname"
+                      type="text"
+                      value={donorFullName}
+                      onChange={(e) => setDonorFullName(e.target.value)}
+                      placeholder="Enter your full name"
+                      className="w-full pl-10 pr-4 py-3 bg-input border border-border rounded-lg text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
+                      disabled={donorForm.isLoading}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label htmlFor="donor-nationalid" className="block text-sm font-medium text-foreground mb-2">
+                    National ID
+                  </label>
+                  <div className="relative">
+                    <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+                    <input
+                      id="donor-nationalid"
+                      type="text"
+                      value={donorNationalId}
+                      onChange={(e) => setDonorNationalId(e.target.value)}
+                      placeholder="Enter your National ID"
+                      className="w-full pl-10 pr-4 py-3 bg-input border border-border rounded-lg text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
+                      disabled={donorForm.isLoading}
+                    />
+                  </div>
+                </div>
+
+                {donorForm.error && (
+                  <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-lg flex items-center gap-2">
+                    <AlertCircle className="h-4 w-4 text-destructive" />
+                    <span className="text-sm text-destructive">{donorForm.error}</span>
+                  </div>
+                )}
+
+                {donorForm.success && (
+                  <div className="p-3 bg-green-500/10 border border-green-500/20 rounded-lg">
+                    <span className="text-sm text-green-500">{donorForm.success}</span>
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={donorForm.isLoading || backendConnected === false}
+                  className="w-full py-3 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  {donorForm.isLoading ? (
+                    <>
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                      Signing in...
+                    </>
+                  ) : (
+                    "Sign In"
+                  )}
+                </button>
+
+                <p className="text-center text-sm text-muted-foreground">
+                  Don&apos;t have an account?{" "}
+                  <Link href="/register" className="text-primary hover:underline font-medium">
+                    Register as Donor
+                  </Link>
+                </p>
+              </form>
             )}
 
-            <Tabs defaultValue="email" className="w-full">
-              <TabsList className="grid w-full grid-cols-3 mb-6">
-                <TabsTrigger value="email" className="text-xs">
-                  <Mail className="h-4 w-4 mr-1" />
-                  Email
-                </TabsTrigger>
-                <TabsTrigger value="phone" className="text-xs">
-                  <Phone className="h-4 w-4 mr-1" />
-                  Phone
-                </TabsTrigger>
-                <TabsTrigger value="id" className="text-xs">
-                  <CreditCard className="h-4 w-4 mr-1" />
-                  ID
-                </TabsTrigger>
-              </TabsList>
-
-              <TabsContent value="email">
-                <form onSubmit={(e) => handleSubmit(e, "email")} className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="email">Email Address</Label>
-                    <Input
-                      id="email"
-                      type="email"
-                      placeholder="you@example.com"
-                      value={formData.email}
-                      onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                      className="bg-input border-border"
-                      required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="password-email">Password</Label>
-                    <Input
-                      id="password-email"
-                      type="password"
-                      placeholder="••••••••"
-                      value={formData.password}
-                      onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                      className="bg-input border-border"
-                      required
-                    />
-                  </div>
-                  <Button type="submit" className="w-full" disabled={isLoading}>
-                    {isLoading ? (
-                      <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        Signing in...
-                      </>
-                    ) : (
-                      "Sign In"
-                    )}
-                  </Button>
-                </form>
-              </TabsContent>
-
-              <TabsContent value="phone">
-                <form onSubmit={(e) => handleSubmit(e, "phone")} className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="phone">Phone Number</Label>
-                    <Input
-                      id="phone"
+            {/* Worker Login Form (OTP) */}
+            {activeTab === "worker" && (
+              <form onSubmit={otpSent ? handleVerifyOtp : handleSendOtp} className="space-y-4">
+                <div>
+                  <label htmlFor="worker-phone" className="block text-sm font-medium text-foreground mb-2">
+                    Phone Number
+                  </label>
+                  <div className="relative">
+                    <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+                    <input
+                      id="worker-phone"
                       type="tel"
-                      placeholder="+1 234 567 8900"
-                      value={formData.phone}
-                      onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                      className="bg-input border-border"
-                      required
+                      value={workerPhone}
+                      onChange={(e) => setWorkerPhone(e.target.value)}
+                      placeholder="Enter your phone number"
+                      className="w-full pl-10 pr-4 py-3 bg-input border border-border rounded-lg text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
+                      disabled={workerForm.isLoading || otpSent}
                     />
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="password-phone">Password</Label>
-                    <Input
-                      id="password-phone"
-                      type="password"
-                      placeholder="••••••••"
-                      value={formData.password}
-                      onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                      className="bg-input border-border"
-                      required
-                    />
-                  </div>
-                  <Button type="submit" className="w-full" disabled={isLoading}>
-                    {isLoading ? (
-                      <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        Signing in...
-                      </>
-                    ) : (
-                      "Sign In"
-                    )}
-                  </Button>
-                </form>
-              </TabsContent>
+                </div>
 
-              <TabsContent value="id">
-                <form onSubmit={(e) => handleSubmit(e, "id")} className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="donorId">Donor ID</Label>
-                    <Input
-                      id="donorId"
+                {otpSent && (
+                  <div>
+                    <label htmlFor="worker-otp" className="block text-sm font-medium text-foreground mb-2">
+                      OTP Code
+                    </label>
+                    <input
+                      id="worker-otp"
                       type="text"
-                      placeholder="DON-XXXXXX"
-                      value={formData.donorId}
-                      onChange={(e) => setFormData({ ...formData, donorId: e.target.value })}
-                      className="bg-input border-border"
-                      required
+                      value={workerOtp}
+                      onChange={(e) => setWorkerOtp(e.target.value)}
+                      placeholder="Enter 6-digit OTP"
+                      maxLength={6}
+                      className="w-full px-4 py-3 bg-input border border-border rounded-lg text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary text-center text-xl tracking-widest"
+                      disabled={workerForm.isLoading}
                     />
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="password-id">Password</Label>
-                    <Input
-                      id="password-id"
+                )}
+
+                {workerForm.error && (
+                  <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-lg flex items-center gap-2">
+                    <AlertCircle className="h-4 w-4 text-destructive" />
+                    <span className="text-sm text-destructive">{workerForm.error}</span>
+                  </div>
+                )}
+
+                {workerForm.success && (
+                  <div className="p-3 bg-green-500/10 border border-green-500/20 rounded-lg">
+                    <span className="text-sm text-green-500">{workerForm.success}</span>
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={workerForm.isLoading || backendConnected === false}
+                  className="w-full py-3 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  {workerForm.isLoading ? (
+                    <>
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                      {otpSent ? "Verifying..." : "Sending OTP..."}
+                    </>
+                  ) : otpSent ? (
+                    "Verify OTP"
+                  ) : (
+                    "Send OTP"
+                  )}
+                </button>
+
+                {otpSent && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOtpSent(false);
+                      setWorkerOtp("");
+                      setWorkerForm({ isLoading: false, error: "", success: "" });
+                    }}
+                    className="w-full py-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    Change phone number
+                  </button>
+                )}
+
+                <p className="text-center text-sm text-muted-foreground">
+                  Workers are created by BTD administrators.
+                </p>
+              </form>
+            )}
+
+            {/* BTD Login Form */}
+            {activeTab === "btd" && (
+              <form onSubmit={handleBtdLogin} className="space-y-4">
+                <div>
+                  <label htmlFor="btd-email" className="block text-sm font-medium text-foreground mb-2">
+                    Email Address
+                  </label>
+                  <div className="relative">
+                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+                    <input
+                      id="btd-email"
+                      type="email"
+                      value={btdEmail}
+                      onChange={(e) => setBtdEmail(e.target.value)}
+                      placeholder="Enter your email"
+                      className="w-full pl-10 pr-4 py-3 bg-input border border-border rounded-lg text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
+                      disabled={btdForm.isLoading}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label htmlFor="btd-password" className="block text-sm font-medium text-foreground mb-2">
+                    Password
+                  </label>
+                  <div className="relative">
+                    <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+                    <input
+                      id="btd-password"
                       type="password"
-                      placeholder="••••••••"
-                      value={formData.password}
-                      onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                      className="bg-input border-border"
-                      required
+                      value={btdPassword}
+                      onChange={(e) => setBtdPassword(e.target.value)}
+                      placeholder="Enter your password"
+                      className="w-full pl-10 pr-4 py-3 bg-input border border-border rounded-lg text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
+                      disabled={btdForm.isLoading}
                     />
                   </div>
-                  <Button type="submit" className="w-full" disabled={isLoading}>
-                    {isLoading ? (
-                      <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        Signing in...
-                      </>
-                    ) : (
-                      "Sign In"
-                    )}
-                  </Button>
-                </form>
-              </TabsContent>
-            </Tabs>
+                </div>
 
-            {/* Demo Credentials */}
-            <div className="mt-6 p-4 rounded-lg bg-secondary/50 border border-border">
-              <p className="text-xs font-medium text-card-foreground mb-2">Demo Credentials:</p>
-              <div className="space-y-1 text-xs text-muted-foreground">
-                <p><span className="font-medium">Admin:</span> admin@bloodbank.com</p>
-                <p><span className="font-medium">Worker:</span> worker@bloodbank.com</p>
-                <p><span className="font-medium">Donor:</span> donor@bloodbank.com</p>
-                <p className="text-muted-foreground/70 mt-1">(Any password works for demo)</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+                {btdForm.error && (
+                  <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-lg flex items-center gap-2">
+                    <AlertCircle className="h-4 w-4 text-destructive" />
+                    <span className="text-sm text-destructive">{btdForm.error}</span>
+                  </div>
+                )}
 
+                {btdForm.success && (
+                  <div className="p-3 bg-green-500/10 border border-green-500/20 rounded-lg">
+                    <span className="text-sm text-green-500">{btdForm.success}</span>
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={btdForm.isLoading || backendConnected === false}
+                  className="w-full py-3 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  {btdForm.isLoading ? (
+                    <>
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                      Signing in...
+                    </>
+                  ) : (
+                    "Sign In"
+                  )}
+                </button>
+
+                <p className="text-center text-sm text-muted-foreground">
+                  BTD credentials are pre-configured in the system.
+                </p>
+              </form>
+            )}
+          </div>
+        </div>
+
+        {/* Footer */}
         <p className="text-center text-xs text-muted-foreground mt-6">
-          By signing in, you agree to our Terms of Service and Privacy Policy.
+          By signing in, you agree to our{" "}
+          <Link href="/terms" className="text-primary hover:underline">
+            Terms of Service
+          </Link>{" "}
+          and{" "}
+          <Link href="/privacy" className="text-primary hover:underline">
+            Privacy Policy
+          </Link>
         </p>
       </div>
     </div>
-  )
+  );
 }
